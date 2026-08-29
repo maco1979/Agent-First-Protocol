@@ -1,0 +1,93 @@
+AFP Compliance: FULL(除回源)
+Bindings: HTTP / MCP / IPC
+Domains: component
+Verified: 2026-08-29
+
+================================================================
+Agent-First-Protocol 参考实现 · 合规自评声明
+依据: 10-合规实现检查清单与验证矩阵.md §4 声明模板
+================================================================
+
+[合规等级说明]
+- 最小合规(文档10 §1): 全部满足。
+- 完整合规(文档10 §2): 除 fetch_external 回源外全部满足——
+    list() 分页 / 限流(429+retry_after_sec) / API Key 鉴权(401 auth_failed)
+    / 审计日志 / 多绑定共存(HTTP+MCP+IPC) / X-Blob-Sha256 / /llms.txt
+    / revision 并存不覆盖
+- Bindings: HTTP + MCP + IPC(Windows 命名管道)
+- Domains: component
+
+[验证矩阵 · 9 项] (文档10 §3)
+
+ 1. discover 合法
+    方法: 解析返回 JSON 并对 Schema 校验 ................ 通过
+    覆盖: tests/test_minimal.py::test_discover_schema
+          tests/test_e2e.py::test_discover_validates_protocol_and_caches
+          tests/test_mcp.py::test_discover_same_document_as_http
+          tests/test_ipc.py::test_discover_metadata
+
+ 2. lookup found
+    方法: 查询已知 key .................................. 通过 (Entity, warnings 空)
+    覆盖: tests/test_minimal.py::test_lookup_found
+          tests/test_e2e.py::test_lookup_found
+          tests/test_mcp.py::test_found_returns_entity_structure
+          tests/test_ipc.py::test_lookup_found
+
+ 3. lookup miss
+    方法: 查询不存在 key ................................ 通过 (AFPError entity_missing)
+    覆盖: tests/test_minimal.py::test_lookup_miss_is_404_not_200
+          tests/test_e2e.py::test_lookup_miss_raises_entity_missing_with_afp_error_info
+          tests/test_mcp.py::test_miss_returns_structured_entity_missing
+          tests/test_ipc.py::test_lookup_miss
+
+ 4. lookup partial
+    方法: 查询模糊 key .................................. 通过 (Entity + 非空 warnings)
+    覆盖: tests/test_minimal.py::test_lookup_partial_match
+          tests/test_e2e.py::test_lookup_partial_match_forces_warning_exposure
+          tests/test_mcp.py::test_partial_match_transfers_warnings
+          tests/test_ipc.py::test_lookup_partial_match
+
+ 5. blob 完整性
+    方法: 下载后重算 sha256 比对 X-Blob-Sha256 ........... 通过 (一致)
+    覆盖: tests/test_minimal.py::test_blob_binary_integrity
+          tests/test_e2e.py::test_blob_download_verifies_sha256
+
+ 6. 限流
+    方法: 超频请求 ...................................... 通过 (429 + retry_after_sec)
+    覆盖: tests/test_full.py::test_burst_over_limit_gets_429_with_retry_after
+
+ 7. 鉴权
+    方法: 错误/缺失密钥 .................................. 通过 (401 + auth_failed)
+    覆盖: tests/test_full.py::test_wrong_key_is_401_auth_failed
+          tests/test_full.py::test_missing_key_is_401
+
+ 8. trace_id
+    方法: 发起带 trace_id 请求 ........................... 通过 (响应原样回传)
+    覆盖: tests/test_minimal.py::test_trace_id_passthrough
+          tests/test_e2e.py::test_trace_id_auto_attached_and_unique_per_request
+          tests/test_mcp.py::test_trace_id_passthrough_and_generation
+          tests/test_ipc.py::test_trace_id_generated_when_absent
+
+ 9. 多绑定一致性
+    方法: HTTP 与 MCP 同 key ............................. 通过 (实体内容一致)
+    覆盖: tests/test_mcp.py::test_same_key_same_entity_http_vs_mcp
+          tests/test_ipc.py (IPC 绑定与 HTTP 同语义: discover/lookup/list/blob 行为一致)
+
+[实现裁决记录]
+- ADR-I1: blob 端点 Accept: application/json 内容协商返回 locator 集合
+          (文档04 §2.4, 实现于 afp_service/server.py)
+- ADR-I2: 未知 domain 一律 404 + AFPError(entity_missing, "domain not served")
+          (三绑定行为一致: server.py / mcp_binding.py / ipc_binding.py)
+
+[测试执行]
+命令: python -m pytest tests -q
+结果: 108 passed (2026-08-29, 全绿)
+
+[启动方式]
+HTTP : cd afp_service && python -m uvicorn server:app --port 47100
+MCP  : cd afp_service && python mcp_binding.py
+IPC  : cd afp_service && python ipc_binding.py  (Windows 命名管道)
+
+[延后项]
+- fetch_external 回源(协议定位为可选能力, 含限速/黑名单要求)
+- Serial 绑定(文档09, 无参考实现)
